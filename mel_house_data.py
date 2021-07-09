@@ -33,9 +33,19 @@ house_data.Date=pd.to_datetime(house_data.Date, format="%d/%m/%Y")
 ## convert price into thousand dollar
 house_data.Price = house_data.Price/1000
 house_data.rename(columns={"Price": "price(in thousand)"})
-house_data.head()
+house_data[house_data.SellerG=='Nelson']
 
 """Some analysis on the dataset"""
+
+rev_seller=house_data.groupby([pd.Grouper(key='Date', freq='M'), 'SellerG']).Price.sum().to_frame().reset_index()
+rev_seller['month_year'] = rev_seller['Date'].dt.to_period('M')
+rev_seller.groupby('month_year')[['Price','SellerG']].max() ## returing the name of seller having the highest revenue each month
+
+nhouse_seller=house_data.groupby([pd.Grouper(key='Date', freq='M'), 'SellerG']).SellerG.count().to_frame()
+nhouse_seller=nhouse_seller.rename(columns={'SellerG': 'count_sales'}).reset_index()
+
+nhouse_seller['month_year'] = nhouse_seller['Date'].dt.to_period('M')
+nhouse_seller.groupby('month_year')[['count_sales','SellerG']].max() ## return the name of seller sold the highest no of houses each month
 
 ## the house prices is high in the South,Eastern Metropolitian and more cheaper in the West, North and Eastern Victoria area
 price_mean= house_data.groupby('Regionname').Price.mean().nsmallest(3)
@@ -66,17 +76,24 @@ for area in area_name:
   else:
     print('Nelson did not sell any house in {}'.format(area))
 
-region_nelson
-for area in area_name:
-  if area in regionname_nelson.unique():
-    percent = region_nelson[region_nelson.regions==area].no_houses.values[0]
-    print('{0}% of total houses locate in {1}'.format(percent,area))
-
 ## house price in each area and according to house type
 x=house_data.groupby(['Regionname', 'Type']).Price.agg(np.mean)
 x=x.to_frame()
 
+## price/region/month 
+## visualize
 
+price_month = house_data.groupby([pd.Grouper(key='Date', freq='M'), 'Regionname']).Price.mean().to_frame().reset_index(level=[0,1])
+price_month['month_year']= price_month['Date'].dt.to_period('M')
+price_pivot = price_month.pivot(index='month_year', columns='Regionname',values='Price')
+ax=price_pivot.plot(kind='line', marker='o', figsize=(20,8))
+ax.legend(ncol=2)
+ax.set_ylabel('avg. price monthly')
+
+## On average, the house prices in metro is more expensive compared to in the victorian area
+## in metro area, the house prices in the north and west are not far different, while since jul-2016, the house price in south-eastern significantly increased
+## and became one of 3 areas in metro where the house price is costly after eastern and southern.
+## price of houses in western victoria is cheapest in all regions on average
 
 for area in area_name:
 
@@ -88,6 +105,58 @@ for area in area_name:
   price_min = round(x_plus.Price.min(),3)
 
   print('In the {0}, the {1} house type is the most expensive with avg. price is {2}, whereas {3} is the cheapest with avg. price of {4}\n '.format(area,htype_max,price_max, htype_min,price_min))
+
+plt.subplots(figsize=(20,8))
+sns.boxplot(x='Regionname',y='Price', hue='Type', data=house_data)
+## outliers in price variables
+## price of h house type is significantly different across regions, highest in the Southern metropolian
+## while the price of u-house is seemingly pretty stable, indifferent across regions 
+## In Metroplolian area, there are more options in terms of house type relative to the victoria area
+
+type_reg = house_data.groupby(['Regionname', 'Type']).Type.count()
+x=type_reg.to_frame()
+
+x.columns=['count_type']
+x=x.reset_index(level=[0,1])
+pivot_x=x.pivot(index='Regionname', columns='Type', values='count_type')
+
+## bar plot- number of each type houses sold in each region in Mel
+ax=pivot_x.plot.bar(figsize=(20,8),rot=0)
+ax.set_ylabel('sales')
+plt.show()
+### the h house type is prominent over other types in all regions 
+### the second most popular house type is u but its popularity focuses on the metropolitian areas
+
+### analysing using date variable
+house_date=house_data.groupby([pd.Grouper(key='Date', axis=0, freq='M'),'Regionname']).SellerG.count()
+house_date=house_date.to_frame().reset_index(level=[0,1])
+house_date['month_year']=house_date['Date'].dt.to_period('M')
+
+pivot_hd = house_date.pivot(index='month_year', columns='Regionname', values='SellerG')
+pivot_hd=pivot_hd.reset_index()
+
+sales= house_data.groupby(pd.Grouper(key='Date', axis=0, freq='M')).SellerG.count().to_frame()
+sales['month_year']=sales.index.to_period('M')
+
+fig,axes = plt.subplots(1,2,figsize=(20,5))
+color= 'tab:green'
+
+## bar plot
+axes[0].set_title('Sales')
+pivot_hd.plot(x='month_year',kind='area', ax= axes[0])
+axes[0].tick_params(axis='y')
+axes[0].legend(ncol=2)
+
+##line plot
+color='tab:red'
+sales.plot(x='month_year',marker='o', ax=axes[1], color='blue')
+axes[1].set_title('Total sales each month')
+
+plt.show()
+
+### Southern and northern metro are 2 areas where pp are willing to buy houses, best-selling house type is h 
+# in 2016, in general, the house sales raised before drastically dropped in Jan-2017, then gradually increased during the rest of this year
+## the increase partly stemmed from the rise in sales in the south-eastern metro and eastern areas.
 
 
 
