@@ -12,6 +12,10 @@ house_data = files.upload()
 
 !pip install pygam
 
+# Commented out IPython magic to ensure Python compatibility.
+# %matplotlib inline
+plt.close('all')
+
 ## importing packages
 from sklearn.preprocessing import MinMaxScaler,StandardScaler,LabelEncoder
 from sklearn.model_selection import train_test_split,KFold,cross_val_score
@@ -19,11 +23,16 @@ from sklearn.pipeline import Pipeline
 from matplotlib import pyplot as plt
 import seaborn as sns
 from sklearn.linear_model import Lasso, Ridge,LinearRegression,BayesianRidge
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.neighbors import KNeighborsRegressor
+from sklearn.tree import DecisionTreeRegressor
+from xgboost import XGBRegressor
 from sklearn.metrics import mean_squared_error as mse
 from sklearn.model_selection import GridSearchCV
 import numpy as np
 from pygam import LinearGAM,s,f,l
 from collections import Counter
+from pandas_profiling import ProfileReport
 
 import pandas as pd
 house_data = pd.read_csv('melb_data.csv')
@@ -33,7 +42,9 @@ house_data.Date=pd.to_datetime(house_data.Date, format="%d/%m/%Y")
 ## convert price into thousand dollar
 house_data.Price = house_data.Price/1000
 house_data.rename(columns={"Price": "price(in thousand)"})
-house_data[house_data.SellerG=='Nelson']
+#house_data[house_data.SellerG=='Nelson']
+
+house_data.head(n=3)
 
 """Some analysis on the dataset"""
 
@@ -106,13 +117,6 @@ for area in area_name:
 
   print('In the {0}, the {1} house type is the most expensive with avg. price is {2}, whereas {3} is the cheapest with avg. price of {4}\n '.format(area,htype_max,price_max, htype_min,price_min))
 
-plt.subplots(figsize=(20,8))
-sns.boxplot(x='Regionname',y='Price', hue='Type', data=house_data)
-## outliers in price variables
-## price of h house type is significantly different across regions, highest in the Southern metropolian
-## while the price of u-house is seemingly pretty stable, indifferent across regions 
-## In Metroplolian area, there are more options in terms of house type relative to the victoria area
-
 type_reg = house_data.groupby(['Regionname', 'Type']).Type.count()
 x=type_reg.to_frame()
 
@@ -158,7 +162,50 @@ plt.show()
 # in 2016, in general, the house sales raised before drastically dropped in Jan-2017, then gradually increased during the rest of this year
 ## the increase partly stemmed from the rise in sales in the south-eastern metro and eastern areas.
 
+pop_method, no_times = best_index(house_data.Method)
+house_data.groupby(['Regionname', 'Method']).Price.mean()
 
+""""Outliers"
+
+"""
+
+plt.subplots(figsize=(20,8))
+sns.boxplot(x='Regionname',y='Price', hue='Type', data=house_data)
+plt.show()
+## wide price range
+## price of h house type is significantly different across regions, highest in the Southern metropolian
+## while the price of u-house is seemingly pretty stable, indifferent across regions 
+## In Metroplolian area, there are more options in terms of house type relative to the victoria area
+
+## detecting "outliers" in price using IQR with conventional cut-off =1.5
+
+def cal_iqr(data, col, cut_off=1.5):
+  q25,q75 = np.percentile(data[col], 25), np.percentile(data[col], 75)
+  iqr_val = q75-q25 
+  lower_bound, upper_bound = q25 - cut_off * iqr_val, q75 + cut_off * iqr_val 
+  above_upper = data[data[col]>upper_bound].shape[0]
+  low_lower = data[data[col] < lower_bound].shape[0]
+
+  return lower_bound, upper_bound, above_upper+low_lower
+
+def get_outlier(df,num_cols, cutoff):
+  summary_out = []
+  col_name= ['Feature', 'no_outliers','Lower bound', 'Upper_bound']
+  for col in num_cols:
+    lower, upper, total = cal_iqr(df,col, cut_off=cutoff )
+    summary_out.append((col,total, lower, upper))
+  out_df = pd.DataFrame(summary_out, columns=col_name)
+  return out_df
+
+
+### new house_data after removing all outliers of price
+lower_bound, upper_bound,total= cal_iqr(house_data,'Landsize')  
+new_data = house_data.copy()
+new_data.Price = np.where(new_data.Price >upper_bound, upper_bound,new_data.Price)
+new_data.Price = np.where(new_data.Price < lower_bound, lower_bound,new_data.Price)
+outlier_df = house_data.loc[(house_data.Price > lower_bound) & (house_data.Price < upper_bound)]
+
+get_outlier(house_data,numerical_cols, 1.5)
 
 """Price exploration: 
 procedure: separating numerical vs cat variables
@@ -169,135 +216,142 @@ procedure: separating numerical vs cat variables
 
 ---
 
-Linear regressions with one-hot encoding for categorical variables
+Separate numerical & categorical variables
 """
 
 ## number of NA values
+
+
 NA_no = {col:sum(house_data[col].isnull()) for col in house_data.columns}
 data = house_data.dropna(axis=0, subset=['Car'])
 cols_no_missing = [col for col in data.columns if data[col].isnull().any()== False]
 data_test = data[cols_no_missing]
-
+X_data = data_test.drop('Price', axis=1)
+y_data = data_test.Price
 ## cat and numerical variables
 
-categorical_cols = [col for col in data_test.columns if data_test[col].dtype=='object']
-numerical_cols = [col for col in data_test.columns if data_test[col].dtype!='object']
+categorical_cols = [col for col in X_data.columns if X_data[col].dtype=='object']
+numerical_cols = [col for col in X_data.columns if (X_data[col].dtype=='float64') or (X_data[col].dtype=='int64') ]
 
 ## variables selection - num: based on correlation / cat: less than 10 categories
-numerical_features = [col for col in numerical_cols if abs(data_test[col].corr(data_test.Price))>0.2]
-cat_features =[col for col in categorical_cols if data_test[col].nunique() <10]
+#numerical_features = [col for col in numerical_cols if abs(data_test[col].corr(data_test.Price))>0.2]
+#cat_features =[col for col in categorical_cols if data_test[col].nunique() <10]
 ## get rid of long an lat-titude in numerical features
-numerical_features = numerical_features[:-2]
-test_col = numerical_features + cat_features
+#numerical_features = numerical_features[:-2]
+#test_col = numerical_features + cat_features
 
 ## visualize
-sns.set_style('whitegrid')
-plt.figure(figsize=(20,90))
+#sns.set_style('whitegrid')
+#plt.figure(figsize=(20,90))
 
-for i in range(len(test_col)):
+#for i in range(len(test_col)):
+  #plt.subplot(12,3,i+1)
+  #sns.scatterplot(x=data_test[test_col[i]], y= data_test.Price)
+
+"""Data Preprocessing"""
+
+## data transforming
+### changing the distribution of numerical features to Gaussian
+scaler_ = PowerTransformer(method='yeo-johnson')
+trans_df = X_data.copy()
+for col in numerical_cols:
+  t = scaler_.fit_transform(np.array(X_data[col]).reshape(-1,1))
+  trans_df[col]=t.reshape(-1)
+
+transen_df = pd.get_dummies(trans_df)
+plt.figure(figsize=(20,70))
+
+for i in range(0,len(numerical_cols)):
   plt.subplot(12,3,i+1)
-  sns.scatterplot(x=data_test[test_col[i]], y= data_test.Price)
+  sns.scatterplot(x=trans_df[numerical_cols[i]], y= y_data)
 
-##### one-hot encoding since categorical variables are nominal variables
-one_enc_df = pd.get_dummies(data_test[test_col], prefix='_')
-X_one_enc = one_enc_df.drop('Price', axis =1)
-y_one_enc = one_enc_df.Price
-sc_mm = ('minmaxscaler',MinMaxScaler())
+## choosing best features
+from sklearn.feature_selection import SelectKBest,f_regression,f_classif
+#### select the 5 best numerical features
+num_fs = SelectKBest(score_func = f_regression, k=5)
+num_fs.fit(trans_df[numerical_cols], y_data)
+
+best_num_cols= num_fs.get_support(indices = True)
+num_df = trans_df[numerical_cols].iloc[:,best_num_cols]
+
+## select cat. variables less than 10 categories
+
+cat_fs =[col for col in categorical_cols if X_data[col].nunique() <10]
+
+best_fs = num_df.columns.to_list() + cat_fs 
+
+best_df_old = trans_df[best_fs]
+best_df = pd.get_dummies(best_df_old, prefix= '_')
+
+"""Model training"""
+
 sc_ss= ('stdscaler',StandardScaler())
-oh_mm =[]
 oh_ss=[]
 
-oh_mm.append(('LinearRegression',Pipeline([sc_mm,('LinearRegression', LinearRegression())])))
-oh_mm.append(('Ridge', Pipeline([sc_mm,("Ridge", Ridge())])))
-oh_mm.append(('Lasso', Pipeline([sc_mm,("Lasso", Lasso())])))
-oh_mm.append(('BayesianRidge', Pipeline([sc_mm,("BayesianRidge", BayesianRidge())])))
+
 
 oh_ss.append(('LinearRegression',Pipeline([sc_ss,('LinearRegression', LinearRegression())])))
 oh_ss.append(('Ridge', Pipeline([sc_ss,("Ridge", Ridge())])))
 oh_ss.append(('Lasso', Pipeline([sc_ss,("Lasso", Lasso())])))
 oh_ss.append(('BayesianRidge', Pipeline([sc_ss,("BayesianRidge", BayesianRidge())])))
+oh_ss.append(('RandomForestRegressor', Pipeline([sc_ss,("RandomForestRegressor", RandomForestRegressor())])))
+oh_ss.append(('GradientBoostingRegressor', Pipeline([sc_ss,("GradientBoostingRegressor", GradientBoostingRegressor())])))
+oh_ss.append(('KNeighborsRegressor', Pipeline([sc_ss,("KNeighborsRegressor", KNeighborsRegressor())])))
+oh_ss.append(('DecisionTreeRegressor', Pipeline([sc_ss,("DecisionTreeRegressor", DecisionTreeRegressor())])))
+oh_ss.append(('XGBRegressor', Pipeline([sc_ss,("XGBRegressor", XGBRegressor(early_stopping_rounds=10,num_boost_round = 100))])))
+
 #### Kfold CV -> grid search
 seed =10
 split = 10
-model_score_ohmm={}
+
 model_score_ohss={}
 
-for i in oh_mm:
-  kf = KFold(n_splits=split, random_state=seed, shuffle=True)
-  cv_results = cross_val_score(i[1],X_one_enc,y_one_enc,cv=kf, n_jobs=4, scoring='r2' )
-  model_score_ohmm.update({i[0]:cv_results.mean()})
-
-print(sorted(model_score_ohmm.items(), key=lambda v:v[1],reverse=True))
 
 for i in oh_ss:
   kf = KFold(n_splits=split, random_state=seed, shuffle=True)
-  cv_results = cross_val_score(i[1],X_one_enc,y_one_enc,cv=kf, n_jobs=4 , scoring='r2')
+  cv_results = cross_val_score(i[1],best_df,y_data,cv=kf, n_jobs=4 )
   model_score_ohss.update({i[0]:cv_results.mean()})
 
 print(sorted(model_score_ohss.items(), key=lambda v:v[1],reverse=True))
 
+## hyper-parameter tuning
+## tuning : 
+ss = ('Scaler', StandardScaler())
+
+est= Pipeline([sc_ss,("XGB", XGBRegressor(early_stopping_rounds=10,num_boost_round = 100))])
+best =[]
+params = {
+    'XGB__max_depth': [7,8,10],
+    'XGB__eta': [0.001, 0.05, 0.01],
+    
+}
+
+
+#kf = KFold(n_splits=split, random_state=seed, shuffle=True)
+gs = GridSearchCV(estimator= est,param_grid=params, cv=5, n_jobs=-1)
+gs_results =gs.fit(best_df, y_data)
+
+## model is improved with max_depth =7, learning_rate = 0.001 and other parameters are kept as defaults
+
+## refit
+new_pipeline = Pipeline([ss,('XGB', XGBRegressor(early_stopping_rounds=10,num_boost_round = 100, max_depth=7, learning_rate=0.001))])
+new_pipeline.fit(best_df, y_data)
+
 ### find out in testing linear model the  Ridge with min_max_scaler performs best => grid search for  ridge
-grid_para = {}
-grid_para['alpha']= list(np.concatenate((np.arange(.1,2,0.1), np.arange(2,5,0.5), np.arange(5,10,1)), axis=0))
+#grid_para = {}
+#grid_para['alpha']= list(np.concatenate((np.arange(.1,2,0.1), np.arange(2,5,0.5), np.arange(5,10,1)), axis=0))
 #grid_para['estimator__alpha_2'] = [1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 0.0, 1.0, 10.0, 100.0]
 #grid_para['estimator__lambda_1'] = [1e-5, 1e-4, 1e-3, 1e-2, 1e-1]
 #grid_para['estimator__lambda_2'] = [1e-5, 1e-4, 1e-3, 1e-2, 1e-1]
 
 ## minmaxscale0
-kf = KFold(n_splits=split, random_state=seed, shuffle=True)
-X_one_enc_plus= MinMaxScaler().fit_transform(X_one_enc)
-y_one_enc_plus = MinMaxScaler().fit_transform(pd.DataFrame(y_one_enc))
-gs = GridSearchCV(Ridge(), grid_para, scoring='r2',n_jobs= 4, cv=kf)
-grid_results=gs.fit(X_one_enc_plus,y_one_enc_plus)
+#kf = KFold(n_splits=split, random_state=seed, shuffle=True)
+#X_one_enc_plus= MinMaxScaler().fit_transform(X_one_enc)
+#y_one_enc_plus = MinMaxScaler().fit_transform(pd.DataFrame(y_one_enc))
+#gs = GridSearchCV(Ridge(), grid_para, scoring='r2',n_jobs= 4, cv=kf)
+#grid_results=gs.fit(X_one_enc_plus,y_one_enc_plus)
 
-ridge_score = cross_val_score(Ridge(alpha=grid_results.best_params_['alpha']), X_one_enc_plus,y_one_enc_plus, cv=kf,
+#ridge_score = cross_val_score(Ridge(alpha=grid_results.best_params_['alpha']), X_one_enc_plus,y_one_enc_plus, cv=kf,
                               scoring='r2', n_jobs=4)
-print('Ridge score with best alpha is {:7f}'.format(ridge_score.mean()))
-
-"""Trying with GAM
-
-"""
-
-## label encoding
-label_encode = LabelEncoder()
-data_label= data_test[test_col].copy()
-for i in cat_features:
-  data_label[i]=label_encode.fit_transform(data_label[i])
-
-
-X_data_label= data_label.drop('Price', axis=1)
-y_data_label = data_label.Price
-X_data_label.describe()
-cols_label = X_data_label.columns
-cols_label
-
-plt.figure(figsize=(20,70))
-
-for i in range(0,len(data_label.columns)-1):
-  plt.subplot(12,3,i+1)
-  sns.scatterplot(x=data_test[cols_label[i]], y= y_data_label)
-
-### GAM
-
-gam = LinearGAM(s(0)+s(1)+s(2)+s(3)+f(4)+f(5)+f(6))
-gam.fit(X_data_label.values,y_data_label.values)
-
-list(enumerate(gam.terms))
-
-plt.rcParams['figure.figsize'] = (28, 8)
-fig,axs = plt.subplots(1,len(data_label.columns)-1);
-for i, ax in enumerate(axs):
-    XX = gam.generate_X_grid(term=i)
-    ax.plot(XX[:, i], gam.partial_dependence(term=i, X=XX))
-    ax.plot(XX[:, i], gam.partial_dependence(term=i, X=XX, width=.95)[1], c='r', ls='--')
-    if i == 0:
-        ax.set_ylim(-30,30)
-    ax.set_title(cols_label[i])
-
-plt.figure()
-XX=gam.generate_X_grid(term=2)
-plt.scatter(X_data_label['Bathroom'], y_data_label)
-plt.plot(XX, gam.predict(XX))
-
-
+#print('Ridge score with best alpha is {:7f}'.format(ridge_score.mean()))
 
