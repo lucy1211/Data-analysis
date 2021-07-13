@@ -26,7 +26,7 @@ from sklearn.model_selection import GridSearchCV
 import numpy as np
 from collections import Counter
 from sklearn.preprocessing import PowerTransformer
-import plotly.express as px
+import plotly.express as px ## adding interactive plots
 
 # Commented out IPython magic to ensure Python compatibility.
 # %matplotlib inline
