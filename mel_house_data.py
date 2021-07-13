@@ -10,12 +10,6 @@ Original file is located at
 from google.colab import files
 house_data = files.upload()
 
-!pip install pygam
-
-# Commented out IPython magic to ensure Python compatibility.
-# %matplotlib inline
-plt.close('all')
-
 ## importing packages
 from sklearn.preprocessing import MinMaxScaler,StandardScaler,LabelEncoder
 from sklearn.model_selection import train_test_split,KFold,cross_val_score
@@ -30,9 +24,13 @@ from xgboost import XGBRegressor
 from sklearn.metrics import mean_squared_error as mse
 from sklearn.model_selection import GridSearchCV
 import numpy as np
-from pygam import LinearGAM,s,f,l
 from collections import Counter
-from pandas_profiling import ProfileReport
+from sklearn.preprocessing import PowerTransformer
+import plotly.express as px
+
+# Commented out IPython magic to ensure Python compatibility.
+# %matplotlib inline
+plt.close('all')
 
 import pandas as pd
 house_data = pd.read_csv('melb_data.csv')
@@ -124,12 +122,31 @@ x.columns=['count_type']
 x=x.reset_index(level=[0,1])
 pivot_x=x.pivot(index='Regionname', columns='Type', values='count_type')
 
-## bar plot- number of each type houses sold in each region in Mel
+## bar plot- number of each type houses sold in each region in Mel with static graph
 ax=pivot_x.plot.bar(figsize=(20,8),rot=0)
+
 ax.set_ylabel('sales')
+
 plt.show()
+
+
+
 ### the h house type is prominent over other types in all regions 
 ### the second most popular house type is u but its popularity focuses on the metropolitian areas
+
+### plotting the above graph by plotly to be an interactive one
+import plotly.graph_objects as go
+type_house = house_data.Type.unique()
+fig = go.Figure(data=[
+  go.Bar(name= type_house[0], x=area_name, y=pivot_x[type_house[0]] ),
+  go.Bar(name= type_house[1], x=area_name, y=pivot_x[type_house[1]] ),
+  go.Bar(name= type_house[2], x=area_name, y=pivot_x[type_house[2]] )
+])
+fig.update_layout(title='Each house type sales in each area',
+  yaxis = dict(title='Sales', tickfont_size = 14),
+  barmode='group',
+  bargap = 0.15)
+fig.show()
 
 ### analysing using date variable
 house_date=house_data.groupby([pd.Grouper(key='Date', axis=0, freq='M'),'Regionname']).SellerG.count()
@@ -176,6 +193,9 @@ plt.show()
 ## price of h house type is significantly different across regions, highest in the Southern metropolian
 ## while the price of u-house is seemingly pretty stable, indifferent across regions 
 ## In Metroplolian area, there are more options in terms of house type relative to the victoria area
+
+fig = px.box(house_data, x= "Regionname", y='Price', color='Type')
+fig.show()
 
 ## detecting "outliers" in price using IQR with conventional cut-off =1.5
 
@@ -258,7 +278,7 @@ for col in numerical_cols:
   t = scaler_.fit_transform(np.array(X_data[col]).reshape(-1,1))
   trans_df[col]=t.reshape(-1)
 
-transen_df = pd.get_dummies(trans_df)
+
 plt.figure(figsize=(20,70))
 
 for i in range(0,len(numerical_cols)):
