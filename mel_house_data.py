@@ -26,7 +26,7 @@ from sklearn.model_selection import GridSearchCV
 import numpy as np
 from collections import Counter
 from sklearn.preprocessing import PowerTransformer
-import plotly.express as px ## adding interactive plots
+import plotly.express as px
 
 # Commented out IPython magic to ensure Python compatibility.
 # %matplotlib inline
@@ -42,7 +42,7 @@ house_data.Price = house_data.Price/1000
 house_data.rename(columns={"Price": "price(in thousand)"})
 #house_data[house_data.SellerG=='Nelson']
 
-house_data.head(n=3)
+house_data.describe()
 
 """Some analysis on the dataset"""
 
@@ -236,22 +236,40 @@ procedure: separating numerical vs cat variables
 
 ---
 
-Separate numerical & categorical variables
+
 """
+
+x=pd.DatetimeIndex(house_data.Date).month
+house_data['quarter']=pd.cut(x,4, labels=['1st quarter', '2nd quarter', '3rd quarter', '4th quarter']).astype(str)
+
+house_data.head()
+
+"""Separate numerical & categorical variables"""
 
 ## number of NA values
 
 
-NA_no = {col:sum(house_data[col].isnull()) for col in house_data.columns}
+NA_no = {col:sum(house_data.loc[:,col].isnull()) for col in house_data.columns}
 data = house_data.dropna(axis=0, subset=['Car'])
-cols_no_missing = [col for col in data.columns if data[col].isnull().any()== False]
-data_test = data[cols_no_missing]
+cols_no_missing = [col for col in data.columns if data.loc[:,col].isnull().any()== False]
+data_nomiss = data[cols_no_missing]
+
+## checking and removing data points are inappropiately equal 0
+zero_col = {col:sum(house_data.loc[:,col]==0) for col in house_data.columns}
+index_drop = data_nomiss[data_nomiss.loc[:,'Landsize']==0].index
+data_test = data_nomiss.drop(index_drop)
+
+## adding a column of price per square
+data_test.loc[:,'price_square'] = data_test.loc[:,'Price']/data_test.loc[:,'Landsize']
 X_data = data_test.drop('Price', axis=1)
 y_data = data_test.Price
+
 ## cat and numerical variables
 
-categorical_cols = [col for col in X_data.columns if X_data[col].dtype=='object']
-numerical_cols = [col for col in X_data.columns if (X_data[col].dtype=='float64') or (X_data[col].dtype=='int64') ]
+categorical_cols = [col for col in X_data.columns if X_data.loc[:,col].dtype=='object']
+numerical_cols = [col for col in X_data.columns if (X_data.loc[:,col].dtype=='float64') or (X_data.loc[:,col].dtype=='int64') ]
+
+
 
 ## variables selection - num: based on correlation / cat: less than 10 categories
 #numerical_features = [col for col in numerical_cols if abs(data_test[col].corr(data_test.Price))>0.2]
@@ -302,6 +320,7 @@ best_fs = num_df.columns.to_list() + cat_fs
 
 best_df_old = trans_df[best_fs]
 best_df = pd.get_dummies(best_df_old, prefix= '_')
+best_df.head()
 
 """Model training"""
 
